@@ -24,6 +24,7 @@ def randomPassword():
     random.SystemRandom().shuffle(passwordList)
     password = ''.join(passwordList)
     return password
+
 def send_email_via_aws_lambda(url,recipient,password):
     # This first "IF" statement is checking if it is the FIRST dataset, if it is, then download the column headers
     post_request = ("https://ib6l2juafj.execute-api.us-west-2.amazonaws.com/default/send_email_via_ses")
@@ -64,6 +65,26 @@ def add_user_to_paxata(auth_token,paxata_url,username,password,tenantId):
             function_response = "Not Created - User =" + username + " - Status code =" + str(post_response.status_code)
     return function_response
 
+def post_message_to_slack(message):
+    slack_url = "https://hooks.slack.com/services/"
+    slack_unique_id = "T3Z1R3DNG/B0171KPC6KA/kxgeUrqwnCEO90fibpL5jr6C"
+    slack_message = '{"text": \"'+ message +'\"}'
+
+    slack_request = slack_url + slack_unique_id
+    try:
+        slack_post_msg_response = requests.post(slack_request, verify=False, data=slack_message)
+    except:
+        print ("DEBUG: Posting message failed")
+
+def s3_bucket_upload(s3, bucket_name,file_name):
+    # Upload the file to S3
+    #s3.meta.client.upload_file("/tmp/"+file_name, bucket_name, file_name)
+    s3.meta.client.upload_file(file_name, bucket_name, file_name)
+    
+def s3_bucket_download (client, bucket_name,file_name):
+    # Download the file from S3
+    client.download_file(bucket_name, file_name, "/tmp/"+file_name)
+
 
 if __name__ == "__main__":
     with open('config.json', 'r') as f:
@@ -72,11 +93,15 @@ if __name__ == "__main__":
     lambda_location = "/tmp/"
     client = boto3.client('s3')
     s3 = boto3.resource('s3')
+    bucket_name = "paxata-trial-app"
+
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
+    with open('users.json', 'r') as uf:
+        users_file = json.load(uf)
+    #users_file = open("users.txt", "r")
 
-    users_file = open("users.txt", "r")
     paxata_url = str(config["paxata-url"])
     tenantId = str(config["tenantId"])
 
@@ -87,14 +112,16 @@ if __name__ == "__main__":
 
     pax_auth_token = HTTPBasicAuth("",config["rest-token"])
 
+    #3. Process File
     for user in users_file:
-        username = user.rstrip()
+        username = users_file[user]
         password = randomPassword()
         add_user_response = add_user_to_paxata(pax_auth_token,paxata_url,username,password,tenantId)
         #if add_user_response[0:6] == "Created":
         #    send_email_response = send_email_via_aws_lambda(config['paxata-url'],username,password)
         users_output_file.write(add_user_response+"\n")
-        print(add_user_response)
+        post_message_to_slack(add_user_response)
 
-    print ("Done")
+    logger.info(users_output+' has been written')
     users_output_file.close()
+    s3_bucket_upload(s3, bucket_name, users_output_file)
